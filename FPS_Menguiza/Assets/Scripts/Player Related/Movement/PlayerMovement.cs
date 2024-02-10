@@ -1,23 +1,32 @@
+using System;
+using System.Collections.Generic;
+using Unity.VisualScripting;
 using UnityEngine;
+using UnityEngine.InputSystem.HID;
 
 public enum PlayerState
 {
     Walking, Running, Crouching
 }
 
-[RequireComponent (typeof(CharacterController))]
+[RequireComponent(typeof(CharacterController))]
 [RequireComponent(typeof(InputManager))]
 public class PlayerMovement : MonoBehaviour
 {
     //Changeable
     [Header("Movement")]
-    [SerializeField][Range(0f, 100f)] private float walkSpeed = 2.0f;
-    [SerializeField][Range(0f, 100f)] private float runSpeed = 5.0f;
+    [SerializeField][Range(0f, 100f)] private float crouchSpeed = 2.0f;
+    [SerializeField][Range(0f, 100f)] private float walkSpeed = 3.0f;
+    [SerializeField][Range(0f, 100f)] private float runSpeed = 6.0f;
     [SerializeField][Range(0f, 10f)] private float jumpHeight = 1.0f;
     [SerializeField][Range(0f, 3f)] private float jumpSmoothRatio = 3.0f;
 
     [Header("Parameters")]
     [SerializeField][Range(0.5f, 0.9f)] private float shrinkRatio = 0.75f;
+    [SerializeField][Range(0f, 100f)] private float shrinkSpeed = 10f;
+    [SerializeField][Range(0.01f, 0.1f)] private float headCollisionOffset = 0.05f;
+    [SerializeField] private LayerMask headCheckLayers;
+    [SerializeField] private Transform headCheckers;
 
     [Header("Physics")]
     [SerializeField][Range(-20f, 0f)] private float gravity = -9.81f;
@@ -30,7 +39,8 @@ public class PlayerMovement : MonoBehaviour
     private InputManager inputManager;
     private Vector3 playerVelocity;
     private sbyte minusOne = -1;
-    private float currentSpeed = 0f, originalPlayerSize, originalPlayerCenter, originalCameraHolderPos;
+    private float currentSpeed = 0f, originalPlayerSize, distance;
+    private bool doneCrouching = true;
 
     //Access
     public CharacterController CharacterController {  get; private set; }
@@ -50,8 +60,6 @@ public class PlayerMovement : MonoBehaviour
         PlayerState = PlayerState.Running;
 
         originalPlayerSize = CharacterController.height;
-        originalPlayerCenter = CharacterController.center.y;
-        originalCameraHolderPos = camerHolder.position.y;
     }
 
     void Update()
@@ -59,11 +67,15 @@ public class PlayerMovement : MonoBehaviour
         //Physics
         ApplyGravity();
 
-        //Behaviors
+        //Movement Handlers
         Crouch();
         Walk();
         Move();
         Jump();
+
+        //Behaviors
+        ShrinkPlayerToggle();
+        ShrinkCheck();
 
         //Movement
         ApplyMovement();
@@ -128,9 +140,9 @@ public class PlayerMovement : MonoBehaviour
             if (PlayerState != PlayerState.Crouching)
             {
                 PlayerState = PlayerState.Crouching;
-                currentSpeed = walkSpeed;
+                currentSpeed = crouchSpeed;
 
-                ShrinkPlayerToggle();
+                doneCrouching = false;
             }
         }
         else
@@ -139,9 +151,8 @@ public class PlayerMovement : MonoBehaviour
             if (PlayerState == PlayerState.Crouching)
             {
                 PlayerState = PlayerState.Running;
-                currentSpeed = runSpeed;
 
-                ShrinkPlayerToggle();
+                doneCrouching = false;
             }
         }
     }
@@ -181,19 +192,85 @@ public class PlayerMovement : MonoBehaviour
 
     private void ShrinkPlayerToggle()
     {
+        if (doneCrouching) return;
+
         if(PlayerState == PlayerState.Crouching)
         {
-            CharacterController.height *= shrinkRatio;
-            CharacterController.center = new Vector3(CharacterController.center.x, CharacterController.center.y * shrinkRatio, CharacterController.center.z);
-            camerHolder.position = new Vector3(camerHolder.position.x, camerHolder.position.y * shrinkRatio, camerHolder.position.z);
+            UpdatePlayerHeight(originalPlayerSize * shrinkRatio, true);
+
+            if (Math.Round(CharacterController.height, 1) <= originalPlayerSize*shrinkRatio)
+            {
+                UpdatePlayerHeight(originalPlayerSize * shrinkRatio, false);
+
+                doneCrouching =true;
+            }
         }
         else
         {
-            CharacterController.height = originalPlayerSize;
-            CharacterController.center = new Vector3(CharacterController.center.x, originalPlayerCenter, CharacterController.center.z);
-            camerHolder.position = new Vector3(camerHolder.position.x, originalCameraHolderPos, camerHolder.position.z);
+            if(distance != 0f)
+            {
+                if (distance - CharacterController.height / 2 > headCollisionOffset)
+                {
+                    UpdatePlayerHeight((originalPlayerSize * shrinkRatio) + distance, true);
+
+                    return;
+                }
+            }
+            else
+            {
+                UpdatePlayerHeight(originalPlayerSize, true);
+            }
+
+            if (Math.Round(CharacterController.height, 1) >= originalPlayerSize)
+            {
+                UpdatePlayerHeight(originalPlayerSize, false);
+
+                currentSpeed = runSpeed;
+                doneCrouching = true;
+            }
         }
     }
 
+    private void ShrinkCheck()
+    {
+        if (CharacterController.height != originalPlayerSize)
+        {
+            RaycastHit hit;
+            distance = 0f;
+
+            foreach (Transform checker in headCheckers)
+            {
+                if (Physics.Raycast(checker.position, checker.up, out hit, originalPlayerSize, headCheckLayers))
+                {
+                    if (distance == 0) distance = hit.distance;
+                    else if (distance > hit.distance && hit.distance != 0) distance = hit.distance;
+                }
+            }
+        }
+    }
+
+    private void UpdatePlayerHeight(float newHeight, bool lerp)
+    {
+        if(lerp) CharacterController.height = Mathf.Lerp(CharacterController.height, newHeight, shrinkSpeed * Time.deltaTime);
+        else CharacterController.height = newHeight;
+
+        CharacterController.center = new Vector3(CharacterController.center.x, CharacterController.height / 2, CharacterController.center.z);
+        camerHolder.position = new Vector3(camerHolder.position.x, (CharacterController.height / 2) + 0.5f, camerHolder.position.z);
+    }
+
     #endregion
+
+#if UNITY_EDITOR
+
+    private void OnDrawGizmos()
+    {
+        Gizmos.color = Color.yellow;
+
+        foreach (Transform checker in headCheckers)
+        {
+            Gizmos.DrawRay(checker.position, checker.up * 2);
+        }
+    }
+
+#endif
 }
