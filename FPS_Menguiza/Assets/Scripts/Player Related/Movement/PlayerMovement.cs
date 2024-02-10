@@ -192,23 +192,29 @@ public class PlayerMovement : MonoBehaviour
 
     private void ShrinkPlayerToggle()
     {
+        //Check if crouch process done
         if (doneCrouching) return;
 
+        //Check state
         if(PlayerState == PlayerState.Crouching)
         {
+            //Lerp height
             UpdatePlayerHeight(originalPlayerSize * shrinkRatio, true);
 
-            if (Math.Round(CharacterController.height, 1) <= originalPlayerSize*shrinkRatio)
+            //Not exact values fix
+            if (Math.Round(CharacterController.height, 1) <= originalPlayerSize * shrinkRatio)
             {
                 UpdatePlayerHeight(originalPlayerSize * shrinkRatio, false);
 
-                doneCrouching =true;
+                doneCrouching = true;
             }
         }
         else
         {
+            //Check if distance store some value
             if(distance != 0f)
             {
+                //Lerp height until head offset
                 if (distance - CharacterController.height / 2 > headCollisionOffset)
                 {
                     UpdatePlayerHeight((originalPlayerSize * shrinkRatio) + distance, true);
@@ -218,9 +224,11 @@ public class PlayerMovement : MonoBehaviour
             }
             else
             {
+                //Stand player
                 UpdatePlayerHeight(originalPlayerSize, true);
             }
 
+            //Not exact values fix
             if (Math.Round(CharacterController.height, 1) >= originalPlayerSize)
             {
                 UpdatePlayerHeight(originalPlayerSize, false);
@@ -233,15 +241,22 @@ public class PlayerMovement : MonoBehaviour
 
     private void ShrinkCheck()
     {
+        //Check if player is shrinked
         if (CharacterController.height != originalPlayerSize)
         {
+            //Local variable
             RaycastHit hit;
+
+            //Reset data variable
             distance = 0f;
 
+            //Loop checkers
             foreach (Transform checker in headCheckers)
             {
+                //Check for any collision detected
                 if (Physics.Raycast(checker.position, checker.up, out hit, originalPlayerSize, headCheckLayers))
                 {
+                    //Check for first collision
                     if (distance == 0) distance = hit.distance;
                     else if (distance > hit.distance && hit.distance != 0) distance = hit.distance;
                 }
@@ -251,9 +266,11 @@ public class PlayerMovement : MonoBehaviour
 
     private void UpdatePlayerHeight(float newHeight, bool lerp)
     {
+        //Lerp mode condition
         if(lerp) CharacterController.height = Mathf.Lerp(CharacterController.height, newHeight, shrinkSpeed * Time.deltaTime);
         else CharacterController.height = newHeight;
 
+        //Re position CC center and camera
         CharacterController.center = new Vector3(CharacterController.center.x, CharacterController.height / 2, CharacterController.center.z);
         camerHolder.position = new Vector3(camerHolder.position.x, (CharacterController.height / 2) + 0.5f, camerHolder.position.z);
     }
