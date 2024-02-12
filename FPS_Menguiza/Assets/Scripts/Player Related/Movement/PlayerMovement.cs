@@ -1,8 +1,5 @@
 using System;
-using System.Collections.Generic;
-using Unity.VisualScripting;
 using UnityEngine;
-using UnityEngine.InputSystem.HID;
 
 public enum PlayerState
 {
@@ -46,6 +43,7 @@ public class PlayerMovement : MonoBehaviour
     public CharacterController CharacterController {  get; private set; }
     public bool Grounded {  get; private set; }
     public PlayerState PlayerState {  get; private set; }
+    public Vector3 PlayerVelocity { get { return playerVelocity; } }
 
     //Events
 
