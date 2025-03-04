@@ -1,83 +1,123 @@
 using System;
-using System.Collections.Generic;
-using Unity.VisualScripting;
+using System.Collections;
+using System.Threading.Tasks;
 using UnityEngine;
-using UnityEngine.InputSystem.HID;
 
 public enum PlayerState
 {
-    Walking, Running, Crouching
+    Running, 
+    Walking, 
+    Crouching
 }
 
 [RequireComponent(typeof(CharacterController))]
-[RequireComponent(typeof(InputManager))]
 public class PlayerMovement : MonoBehaviour
 {
-    //Changeable
-    [Header("Movement")]
-    [SerializeField][Range(0f, 100f)] private float crouchSpeed = 2.0f;
-    [SerializeField][Range(0f, 100f)] private float walkSpeed = 3.0f;
-    [SerializeField][Range(0f, 100f)] private float runSpeed = 6.0f;
-    [SerializeField][Range(0f, 10f)] private float jumpHeight = 1.0f;
-    [SerializeField][Range(0f, 3f)] private float jumpSmoothRatio = 3.0f;
+    //Editor Variables
+    [Header("REFERENCES")]
+    [Header("Input")]
+    [SerializeField] private InputReader inputReader;
+    [Header("Camera")]
+    [SerializeField] private Transform camerHolder;
+    [Space]
+    [Header("PARAMETERS")]
+    [Header("Profile")]
+    [SerializeField] private MovementProfile movementProfile;
 
-    [Header("Parameters")]
+    [Header("Shrink")]
     [SerializeField][Range(0.5f, 0.9f)] private float shrinkRatio = 0.75f;
     [SerializeField][Range(0f, 100f)] private float shrinkSpeed = 10f;
-    [SerializeField][Range(0.01f, 0.1f)] private float headCollisionOffset = 0.05f;
-    [SerializeField] private LayerMask headCheckLayers;
+
+    [Header("Collisions")]
+    [SerializeField][Range(0.01f, 0.5f)] private float headCollisionOffset = 0.05f;
     [SerializeField] private Transform headCheckers;
+    [SerializeField] private LayerMask headCheckLayers;
 
     [Header("Physics")]
     [SerializeField][Range(-20f, 0f)] private float gravity = -9.81f;
     [SerializeField][Range(0f, 10f)] private float gravityMultiplier = 1.0f;
 
-    [Header("References")]
-    [SerializeField] private Transform camerHolder;
+    //Utility Variables
+    private Vector3 _playerVelocity;
 
-    //Utility
-    private InputManager inputManager;
-    private Vector3 playerVelocity;
-    private sbyte minusOne = -1;
-    private float currentSpeed = 0f, originalPlayerSize, distance;
-    private bool doneCrouching = true;
+    private float _currentSpeed;
+    private float _originalPlayerSize;
+    private float _distance;
 
-    //Access
-    public CharacterController CharacterController {  get; private set; }
+    private bool _doneCrouching = true;
+
+    //Input Variables
+    private Vector2 _moveAxis;
+    private bool _walking, _crouching;
+
+    #region InputHandlers
+    private void HandleMove(Vector2 moveAxis) => this._moveAxis = moveAxis;
+
+    private void HandleWalk() => _walking = true;
+    private void HandleWalkCancelled() => _walking = false;
+
+    private void HandleCrouch() => _crouching = true;
+    private void HandleCrouchCancelled() => _crouching = false;
+    #endregion
+
+    //Accessors
+    public CharacterController CC {  get; private set; }
     public bool Grounded {  get; private set; }
-    public PlayerState PlayerState {  get; private set; }
+    public PlayerState PlayerState { get; private set; }
 
     //Events
 
+#if UNITY_EDITOR
+    private void OnValidate()
+    {
+        if(!CC)
+        {
+            //Get Character Controller reference
+            CC = GetComponent<CharacterController>();
+        }
+    }
+#endif
+
     private void Awake()
     {
-        //Get references
-        CharacterController = GetComponent<CharacterController>();
-        inputManager = GetComponent<InputManager>();
-
+#if UNITY_STANDALONE
+        //Get Character Controller reference
+        CC = GetComponent<CharacterController>();
+#endif
         //Set Up
-        currentSpeed = runSpeed;
-        PlayerState = PlayerState.Running;
+        SetPlayerState(PlayerState.Running);
+        _originalPlayerSize = CC.height;
 
-        originalPlayerSize = CharacterController.height;
+        //Bind Inputs
+        inputReader.MoveEvent += HandleMove;
+
+        inputReader.JumpEvent += Jump;
+
+        inputReader.WalkEvent += HandleWalk;
+        inputReader.WalkCancelledEvent += HandleWalkCancelled;
+
+        inputReader.CrouchEvent += HandleCrouch;
+        inputReader.CrouchCancelledEvent += HandleCrouchCancelled;
     }
 
     void Update()
     {
+        //Grounded
+        GroundCheck();
+
         //Physics
         ApplyGravity();
 
-        //Movement Handlers
+        //Movement
         Crouch();
         Walk();
         Move();
-        Jump();
 
-        //Behaviors
-        ShrinkPlayerToggle();
+        //Shrink
         ShrinkCheck();
+        ShrinkPlayerToggle();
 
-        //Movement
+        //Displacement
         ApplyMovement();
     }
 
@@ -85,75 +125,60 @@ public class PlayerMovement : MonoBehaviour
 
     private void Move()
     {
-        //Allocate info
-        Vector2 moveAxis = inputManager.MoveAxis;
-
         //Determine move direction
-        Vector3 moveDir = transform.right * moveAxis.x + transform.forward * moveAxis.y;
+        Vector3 moveDir = transform.right * _moveAxis.x + transform.forward * _moveAxis.y;
 
         //Apply values to velocity vector
-        playerVelocity.x = moveDir.x * currentSpeed;
-        playerVelocity.z = moveDir.z * currentSpeed;
+        _playerVelocity.x = moveDir.x * _currentSpeed;
+        _playerVelocity.z = moveDir.z * _currentSpeed;
     }
 
     private void Jump()
     {
-        //Check jump input and grounded
-        if(inputManager.Jump && Grounded)
+        //Check grounded
+        if(Grounded)
         {
-            playerVelocity.y += Mathf.Sqrt(jumpHeight * (minusOne * jumpSmoothRatio) * gravity); 
+            _playerVelocity.y += Mathf.Sqrt(movementProfile.JumpHeight * (-movementProfile.JumpSmoothRatio) * gravity); 
         }
     }
 
     private void Walk()
     {
-        //Check if player crouching
+        //If player crouching
         if (PlayerState == PlayerState.Crouching) return;
 
-        //Check conditions for walk
-        if(inputManager.Walk && Grounded)
+        //If trying to walk, set state
+        if (_walking && Grounded && PlayerState != PlayerState.Walking)
         {
-            //Check if it is already walking
-            if(PlayerState != PlayerState.Walking)
-            {
-                PlayerState = PlayerState.Walking;
-                currentSpeed = walkSpeed;
-            }
+            SetPlayerState(PlayerState.Walking);
         }
-        else
+        // If trying to stop walking
+        else if ((!_walking || !Grounded) && PlayerState == PlayerState.Walking)
         {
-            //Check if it is walking
-            if (PlayerState == PlayerState.Walking)
-            {
-                PlayerState = PlayerState.Running;
-                currentSpeed = runSpeed;
-            }
+            SetPlayerState(PlayerState.Running);
         }
     }
 
     private void Crouch()
     {
-        //Check conditions for crouch
-        if (inputManager.Crouch)
-        {
-            //Check if it is already crouching
-            if (PlayerState != PlayerState.Crouching)
-            {
-                PlayerState = PlayerState.Crouching;
-                currentSpeed = crouchSpeed;
+        // If already crouching and still wants to, do nothing
+        if (_crouching && PlayerState == PlayerState.Crouching) return;
 
-                doneCrouching = false;
-            }
+        // If trying to crouch, set state
+        if (_crouching)
+        {
+            SetPlayerState(PlayerState.Crouching);
+            _doneCrouching = false;
         }
-        else
+        // If trying to stand up, first check if there's space
+        else if (PlayerState == PlayerState.Crouching)
         {
-            //Check if it is crouching
-            if (PlayerState == PlayerState.Crouching)
+            if (_distance == 0f || (_distance - (_originalPlayerSize * shrinkRatio)) >= headCollisionOffset)
             {
-                PlayerState = PlayerState.Running;
-
-                doneCrouching = false;
+                SetPlayerState(PlayerState.Running);
             }
+
+            _doneCrouching = false;
         }
     }
 
@@ -164,115 +189,132 @@ public class PlayerMovement : MonoBehaviour
     private void GroundCheck() 
     {
         //Is Player Grounded
-        Grounded = CharacterController.isGrounded;
+        Grounded = CC.isGrounded;
     }
 
     private void ApplyGravity()
     {
-        //Checks
-        GroundCheck();
-
-        if (Grounded && playerVelocity.y < 0.0f)
+        if (Grounded)
         {
-            //Reset vertical velocity
-            playerVelocity.y = -1.0f;
+            _playerVelocity.y = Mathf.Max(_playerVelocity.y, -0.3f);
         }
         else
         {
             //Apply gravity velocity
-            playerVelocity.y += gravity * gravityMultiplier * Time.deltaTime;
+            _playerVelocity.y += gravity * gravityMultiplier * Time.deltaTime;
         }
     }
 
     private void ApplyMovement()
     {
         //Move by character controller
-        CharacterController.Move(playerVelocity * Time.deltaTime);
+        CC.Move(_playerVelocity * Time.deltaTime);
+    }
+
+    private void SetPlayerState(PlayerState newState)
+    {
+        PlayerState = newState;
+
+        switch (PlayerState)
+        {
+            case PlayerState.Running:
+                _currentSpeed = movementProfile.RunSpeed;
+                break;
+            case PlayerState.Walking:
+                if(Grounded) _currentSpeed = movementProfile.WalkSpeed;
+                else StartCoroutine(RestoreSpeed());
+                break;
+            case PlayerState.Crouching:
+                if (Grounded) _currentSpeed = movementProfile.CrouchSpeed;
+                else StartCoroutine(RestoreSpeed());
+                break;
+        }
     }
 
     private void ShrinkPlayerToggle()
     {
         //Check if crouch process done
-        if (doneCrouching) return;
+        if (_doneCrouching) return;
 
         //Check state
-        if(PlayerState == PlayerState.Crouching)
+        if (PlayerState == PlayerState.Crouching)
         {
-            //Lerp height
-            UpdatePlayerHeight(originalPlayerSize * shrinkRatio, true);
-
-            //Not exact values fix
-            if (Math.Round(CharacterController.height, 1) <= originalPlayerSize * shrinkRatio)
+            //Check for input
+            if(_crouching)
             {
-                UpdatePlayerHeight(originalPlayerSize * shrinkRatio, false);
+                //Lerp height
+                AdjustPlayerHeight(_originalPlayerSize * shrinkRatio, true);
 
-                doneCrouching = true;
+                //Not exact values fix
+                if (Math.Round(CC.height, 2) <= _originalPlayerSize * shrinkRatio)
+                {
+                    AdjustPlayerHeight(_originalPlayerSize * shrinkRatio, false);
+                    _doneCrouching = true;
+                }
+
+                return;
+            }
+
+            // Check if distance has been stored and provides enough clearance
+            if (_distance != 0f)
+            {
+                float fixedDistance = (float)Math.Round((_distance - headCollisionOffset), 2, MidpointRounding.ToEven);
+
+                AdjustPlayerHeight((_originalPlayerSize * shrinkRatio) + fixedDistance, true);
+                return;
             }
         }
-        else
+
+        // Stand up normally
+        AdjustPlayerHeight(_originalPlayerSize, true);
+
+        // Fix for exact height
+        if (Math.Round(CC.height, 2) >= _originalPlayerSize)
         {
-            //Check if distance store some value
-            if(distance != 0f)
-            {
-                //Lerp height until head offset
-                if (distance - CharacterController.height / 2 > headCollisionOffset)
-                {
-                    UpdatePlayerHeight((originalPlayerSize * shrinkRatio) + distance, true);
-
-                    return;
-                }
-            }
-            else
-            {
-                //Stand player
-                UpdatePlayerHeight(originalPlayerSize, true);
-            }
-
-            //Not exact values fix
-            if (Math.Round(CharacterController.height, 1) >= originalPlayerSize)
-            {
-                UpdatePlayerHeight(originalPlayerSize, false);
-
-                currentSpeed = runSpeed;
-                doneCrouching = true;
-            }
+            AdjustPlayerHeight(_originalPlayerSize, false);
+            SetPlayerState(PlayerState.Running);
+            _doneCrouching = true;
         }
     }
 
     private void ShrinkCheck()
     {
         //Check if player is shrinked
-        if (CharacterController.height != originalPlayerSize)
+        if (CC.height == _originalPlayerSize) return;
+
+        //Reset data variable
+        _distance = 0f;
+
+        //Local variable
+        RaycastHit hit;
+
+        //Loop checkers
+        foreach (Transform checker in headCheckers)
         {
-            //Local variable
-            RaycastHit hit;
-
-            //Reset data variable
-            distance = 0f;
-
-            //Loop checkers
-            foreach (Transform checker in headCheckers)
+            //Check for any collision detected
+            if (Physics.Raycast(checker.position, checker.up, out hit, _originalPlayerSize, headCheckLayers))
             {
-                //Check for any collision detected
-                if (Physics.Raycast(checker.position, checker.up, out hit, originalPlayerSize, headCheckLayers))
-                {
-                    //Check for first collision
-                    if (distance == 0) distance = hit.distance;
-                    else if (distance > hit.distance && hit.distance != 0) distance = hit.distance;
-                }
+                _distance = _distance == 0 ? hit.distance : Mathf.Min(_distance, hit.distance);
             }
         }
     }
 
-    private void UpdatePlayerHeight(float newHeight, bool lerp)
+    private void AdjustPlayerHeight(float newHeight, bool lerp)
     {
         //Lerp mode condition
-        if(lerp) CharacterController.height = Mathf.Lerp(CharacterController.height, newHeight, shrinkSpeed * Time.deltaTime);
-        else CharacterController.height = newHeight;
+        CC.height = lerp ? Mathf.Lerp(CC.height, newHeight, shrinkSpeed * Time.deltaTime) : newHeight;
 
         //Re position CC center and camera
-        CharacterController.center = new Vector3(CharacterController.center.x, CharacterController.height / 2, CharacterController.center.z);
-        camerHolder.position = new Vector3(camerHolder.position.x, (CharacterController.height / 2) + 0.5f, camerHolder.position.z);
+        CC.center = Vector3.up * (CC.height/2);
+
+        camerHolder.localPosition = Vector3.up * (CC.center.y + 0.5f);
+    }
+
+    private IEnumerator RestoreSpeed()
+    {
+        yield return new WaitUntil(() => Grounded);
+
+        SetPlayerState(PlayerState);
     }
 
     #endregion

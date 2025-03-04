@@ -5,7 +5,7 @@ public class PlayerCam : MonoBehaviour
     //Changeable
     [Header("References")]
     [SerializeField] private Transform player;
-    [SerializeField] private InputManager playerInputs;
+    [SerializeField] private InputReader inputReader;
 
     [Header("Parameters")]
     [SerializeField] [Range(0.01f, 10f)] private float sens = 0.8f;
@@ -14,8 +14,17 @@ public class PlayerCam : MonoBehaviour
     private float sensMultiplier = 10f;
     private Vector2 rotation;
 
+    private Vector2 lookAxis;
+
+    private void HandleLook(Vector2 lookAxis) => this.lookAxis = lookAxis;
+
     //Access
     public float Sens {  get { return sens; } }
+
+    private void Awake()
+    {
+        inputReader.LookEvent += HandleLook;
+    }
 
     void Start()
     {
@@ -31,8 +40,8 @@ public class PlayerCam : MonoBehaviour
 
     private void RotationByInputs()
     {
-        rotation.y += playerInputs.CameraAxis.x * Time.deltaTime * (sens * sensMultiplier);
-        rotation.x -= playerInputs.CameraAxis.y * Time.deltaTime * (sens * sensMultiplier);
+        rotation.y += lookAxis.x * Time.deltaTime * (sens * sensMultiplier);
+        rotation.x -= lookAxis.y * Time.deltaTime * (sens * sensMultiplier);
 
         rotation.x = Mathf.Clamp(rotation.x, -90f, 90f);
 
@@ -46,8 +55,8 @@ public class PlayerCam : MonoBehaviour
 
     private void SetUpMouse()
     {
-        Cursor.lockState = CursorLockMode.Locked;
-        Cursor.visible = false;
+        //Cursor.lockState = CursorLockMode.Locked;
+        //Cursor.visible = false;
     }
 
     #endregion
